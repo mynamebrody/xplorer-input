@@ -1,0 +1,26 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: swift test
+      - name: Build universal app bundle
+        run: |
+          make app zip \
+            VERSION="${GITHUB_REF_NAME#v}" \
+            FLAGS="--arch arm64 --arch x86_64"
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/XplorerRemap-*.zip
+          generate_release_notes: true
