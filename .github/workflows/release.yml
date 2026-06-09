@@ -2,6 +2,7 @@ name: release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
 
 permissions:
@@ -12,15 +13,53 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # Auto-generate version: latest tag base + commit count since tag
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            BASE="${LATEST_TAG#v}"
+            # Increment patch and append short SHA for uniqueness
+            MAJOR=$(echo "$BASE" | cut -d. -f1)
+            MINOR=$(echo "$BASE" | cut -d. -f2)
+            PATCH=$(echo "$BASE" | cut -d. -f3)
+            COMMITS_SINCE=$(git rev-list "${LATEST_TAG}..HEAD" --count 2>/dev/null || git rev-list HEAD --count)
+            NEW_PATCH=$((PATCH + COMMITS_SINCE))
+            VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "→ Version: $VERSION"
+
       - name: Run tests
         run: swift test
+
       - name: Build universal app bundle
         run: |
           make app zip \
-            VERSION="${GITHUB_REF_NAME#v}" \
+            VERSION="${{ steps.version.outputs.version }}" \
             FLAGS="--arch arm64 --arch x86_64"
-      - name: Attach to release
+
+      - name: Create tag
+        if: startsWith(github.ref, 'refs/tags/') == false
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          # Tags pushed via GITHUB_TOKEN do not trigger further workflow runs
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           files: dist/XplorerRemap-*.zip
           generate_release_notes: true
